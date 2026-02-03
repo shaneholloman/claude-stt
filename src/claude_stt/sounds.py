@@ -1,6 +1,7 @@
 """Audio feedback using native system sounds."""
 
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -68,7 +69,7 @@ def _play_macos_sound(event: SoundEvent) -> None:
 
 
 def _play_linux_sound(event: SoundEvent) -> None:
-    """Play sound on Linux using paplay or aplay."""
+    """Play sound on Linux using pw-play, paplay, or aplay."""
     sound_file = LINUX_SOUNDS.get(event)
     if not sound_file:
         return
@@ -76,7 +77,16 @@ def _play_linux_sound(event: SoundEvent) -> None:
         _logger.debug("Sound file missing: %s", sound_file)
         return
 
-    # Try paplay first (PulseAudio/PipeWire)
+    # Try pw-play first (PipeWire native) when the PipeWire socket is present
+    if shutil.which("pw-play") and _pipewire_socket_available():
+        subprocess.Popen(
+            ["pw-play", sound_file],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    # Try paplay (PulseAudio)
     if shutil.which("paplay"):
         subprocess.Popen(
             ["paplay", sound_file],
@@ -85,13 +95,24 @@ def _play_linux_sound(event: SoundEvent) -> None:
         )
         return
 
-    # Fall back to aplay (ALSA)
+    # Fall back to aplay (ALSA) - note: may not support .oga files
     if shutil.which("aplay"):
         subprocess.Popen(
             ["aplay", "-q", sound_file],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+
+def _pipewire_socket_available() -> bool:
+    runtime_dir = os.environ.get("PIPEWIRE_RUNTIME_DIR") or os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime_dir:
+        return False
+    remote = os.environ.get("PIPEWIRE_REMOTE", "pipewire-0")
+    remote_path = Path(remote)
+    if not remote_path.is_absolute():
+        remote_path = Path(runtime_dir) / remote
+    return remote_path.exists()
 
 
 def _play_windows_sound(event: SoundEvent) -> None:
